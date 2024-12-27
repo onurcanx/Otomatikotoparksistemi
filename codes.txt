@@ -1,0 +1,536 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <ESP32Servo.h>
+
+LiquidCrystal_I2C lcd(0x27, 16, 2); // LCD'nin I2C adresi
+Servo servo;
+
+// Pin tanımları
+int pinIR1 = 34; // Kapı sensörü (araç algılama sensörü)
+int pinIR2 = 35; // Park yeri 1 sensörü
+int pinIR3 = 36; // Park yeri 2 sensörü
+int pinIR4 = 39; // Park yeri 3 sensörü
+int pinServo = 26; // Servo motor
+
+// Değişkenler
+bool parkDurum1 = false; // Park yeri 1 durumu
+bool parkDurum2 = false; // Park yeri 2 durumu
+bool parkDurum3 = false; // Park yeri 3 durumu
+bool kapıDurumu = false; // Kapı durumu (true: açık, false: kapalı)
+
+void setup() {
+  // Sensör pinlerini giriş olarak ayarla
+  pinMode(pinIR1, INPUT);
+  pinMode(pinIR2, INPUT);
+  pinMode(pinIR3, INPUT);
+  pinMode(pinIR4, INPUT);
+
+  // Servo motor başlangıç konumu
+  servo.attach(pinServo);
+  servo.write(0); // Kapı başlangıçta kapalı
+
+  // LCD ekran başlatma
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Otopark BOS     ");
+}
+
+void loop() {
+  // Kapı sensöründen gelen veriyi oku
+  int ir1State = digitalRead(pinIR1);
+
+  // Park sensörlerinden gelen verileri oku
+  int ir2State = digitalRead(pinIR2);
+  int ir3State = digitalRead(pinIR3);
+  int ir4State = digitalRead(pinIR4);
+
+  // Kapı kontrolü
+  if (ir1State == LOW && !kapıDurumu) { // Kapı sensörü hareket algıladıysa
+    servo.write(90);  // Kapıyı aç
+    kapıDurumu = true;
+    delay(5000);      // Kapı 5 saniye açık kalacak
+    servo.write(0);   // Kapıyı kapat
+    kapıDurumu = false;
+  }
+
+  // Park yeri 1 kontrolü
+  parkDurum1 = (ir2State == LOW);
+
+  // Park yeri 2 kontrolü
+  parkDurum2 = (ir3State == LOW);
+
+  // Park yeri 3 kontrolü
+  parkDurum3 = (ir4State == LOW);
+
+  // Park doluluk durumunu hesapla
+  int doluParkYeriSayisi = parkDurum1 + parkDurum2 + parkDurum3;
+
+  // LCD ekrana durumu yazdır
+  lcd.setCursor(0, 0);
+  if (doluParkYeriSayisi == 0) {
+    lcd.print("Otopark BOS     ");
+  } else if (doluParkYeriSayisi < 3) {
+    lcd.print(doluParkYeriSayisi);
+    lcd.print(" Park DOLU      ");
+  } else {
+    lcd.print("Otopark DOLU    ");
+  }
+
+  // 2. satırda detaylı durum göster
+  lcd.setCursor(0, 1);
+  lcd.print("P1:");
+  lcd.print(parkDurum1 ? "D" : "B"); // D: DOLU, B: BOS
+  lcd.print(" P2:");
+  lcd.print(parkDurum2 ? "D" : "B");
+  lcd.print(" P3:");
+  lcd.print(parkDurum3 ? "D" : "B");
+
+  delay(500); // Sensörleri kontrol etme aralığı
+}
+
+
+
+
+
+
+------------------------
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <ESP32Servo.h>
+#include <FirebaseESP32.h>
+
+// LCD ve Servo ayarları
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+Servo servoGiris;
+Servo servoCikis;
+
+// Pin tanımları
+int pinIRGiris = 34;
+int pinIRCikis = 35;
+int pinIRPark1 = 36;
+int pinIRPark2 = 39;
+int pinIRPark3 = 32;
+int pinServoGiris = 25;
+int pinServoCikis = 26;
+
+// Firebase bilgileri
+#define FIREBASE_HOST "https://gomulu-b71eb-default-rtdb.europe-west1.firebasedatabase.app/" // Firebase URL
+#define FIREBASE_AUTH "QPTTdqsCalMYQCjJAmkWtYZiXh62WH16DnMat6s1" // Legacy Token
+
+// Firebase yapılandırma nesneleri
+FirebaseConfig config;
+FirebaseAuth auth;
+FirebaseData firebaseData;
+
+// Değişkenler
+bool girisKapıDurumu = false;
+bool cikisKapıDurumu = false;
+bool parkDurum1 = false;
+bool parkDurum2 = false;
+bool parkDurum3 = false;
+
+void setup() {
+  // Seri haberleşmeyi başlat
+  Serial.begin(115200);
+
+  // WiFi bağlantısını başlat
+  WiFi.begin("onur", "onur5534");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("WiFi'ye bağlanılıyor...");
+  }
+  Serial.println("WiFi bağlantısı başarılı!");
+
+  // Firebase ayarlarını yap
+  config.host = FIREBASE_HOST;
+  config.signer.tokens.legacy_token = FIREBASE_AUTH;
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  // Sensör pinlerini giriş olarak ayarla
+  pinMode(pinIRGiris, INPUT);
+  pinMode(pinIRCikis, INPUT);
+  pinMode(pinIRPark1, INPUT);
+  pinMode(pinIRPark2, INPUT);
+  pinMode(pinIRPark3, INPUT);
+
+  // Servo motorları başlat
+  servoGiris.attach(pinServoGiris);
+  servoCikis.attach(pinServoCikis);
+  servoGiris.write(0);
+  servoCikis.write(0);
+
+  // LCD ekranı başlat
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Otopark BOS     ");
+}
+
+void loop() {
+  // Sensörlerden veri oku
+  int irGirisState = digitalRead(pinIRGiris);
+  int irCikisState = digitalRead(pinIRCikis);
+  int irPark1State = digitalRead(pinIRPark1);
+  int irPark2State = digitalRead(pinIRPark2);
+  int irPark3State = digitalRead(pinIRPark3);
+
+  // Giriş kapısı kontrolü
+  if (irGirisState == LOW && !girisKapıDurumu) {
+    servoGiris.write(90);
+    girisKapıDurumu = true;
+    delay(3000);
+    servoGiris.write(0);
+    girisKapıDurumu = false;
+  }
+
+  // Çıkış kapısı kontrolü
+  if (irCikisState == LOW && !cikisKapıDurumu) {
+    servoCikis.write(90);
+    cikisKapıDurumu = true;
+    delay(3000);
+    servoCikis.write(0);
+    cikisKapıDurumu = false;
+  }
+
+  // Park yeri durumlarını güncelle
+  parkDurum1 = (irPark1State == LOW);
+  parkDurum2 = (irPark2State == LOW);
+  parkDurum3 = (irPark3State == LOW);
+
+  // Park yeri durumlarını Firebase'e gönder
+  Firebase.setBool(firebaseData, "/ParkYerleri/Park1", parkDurum1);
+  Firebase.setBool(firebaseData, "/ParkYerleri/Park2", parkDurum2);
+  Firebase.setBool(firebaseData, "/ParkYerleri/Park3", parkDurum3);
+
+  // Firebase'e toplam doluluk durumunu gönder
+  int doluParkYeriSayisi = parkDurum1 + parkDurum2 + parkDurum3;
+  Firebase.setInt(firebaseData, "/DoluParkYeriSayisi", doluParkYeriSayisi);
+
+  // LCD ekran güncelle
+  lcd.setCursor(0, 0);
+  if (doluParkYeriSayisi == 0) {
+    lcd.print("Otopark BOS     ");
+  } else if (doluParkYeriSayisi < 3) {
+    lcd.print(doluParkYeriSayisi);
+    lcd.print(" Park DOLU      ");
+  } else {
+    lcd.print("Otopark DOLU    ");
+  }
+
+  lcd.setCursor(0, 1);
+  lcd.print("P1:");
+  lcd.print(parkDurum1 ? "D" : "B");
+  lcd.print(" P2:");
+  lcd.print(parkDurum2 ? "D" : "B");
+  lcd.print(" P3:");
+  lcd.print(parkDurum3 ? "D" : "B");
+
+  delay(1000);
+}
+
+
+
+
+
+-------------------------------------------------------------------------------------------
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <ESP32Servo.h>
+#include <FirebaseESP32.h>
+
+// LCD ve Servo ayarları
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+Servo servoGiris;
+Servo servoCikis;
+
+// Pin tanımları
+int pinIRGiris = 34;
+int pinIRCikis = 35;
+int pinIRPark1 = 36;
+int pinIRPark2 = 39;
+int pinIRPark3 = 32;
+int pinServoGiris = 25;
+int pinServoCikis = 26;
+
+// Firebase bilgileri
+#define FIREBASE_HOST "https://gomulu-b71eb-default-rtdb.europe-west1.firebasedatabase.app/" // Firebase URL
+#define FIREBASE_AUTH "QPTTdqsCalMYQCjJAmkWtYZiXh62WH16DnMat6s1" // Legacy Token
+
+// Firebase yapılandırma nesneleri
+FirebaseConfig config;
+FirebaseAuth auth;
+FirebaseData firebaseData;
+
+// Değişkenler
+bool girisKapıDurumu = false;
+bool cikisKapıDurumu = false;
+bool parkDurum1 = false;
+bool parkDurum2 = false;
+bool parkDurum3 = false;
+
+void setup() {
+  // Seri haberleşmeyi başlat
+  Serial.begin(115200);
+
+  // WiFi bağlantısını başlat
+  WiFi.begin("onur", "onur5534");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("WiFi'ye bağlanılıyor...");
+  }
+  Serial.println("WiFi bağlantısı başarılı!");
+
+  // Firebase ayarlarını yap
+  config.host = FIREBASE_HOST;
+  config.signer.tokens.legacy_token = FIREBASE_AUTH;
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  // Sensör pinlerini giriş olarak ayarla
+  pinMode(pinIRGiris, INPUT);
+  pinMode(pinIRCikis, INPUT);
+  pinMode(pinIRPark1, INPUT);
+  pinMode(pinIRPark2, INPUT);
+  pinMode(pinIRPark3, INPUT);
+
+  // Servo motorları başlat
+  servoGiris.attach(pinServoGiris);
+  servoCikis.attach(pinServoCikis);
+  servoGiris.write(0);
+  servoCikis.write(0);
+
+  // LCD ekranı başlat
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Otopark BOS     ");
+}
+
+void loop() {
+  // Sensörlerden veri oku
+  int irGirisState = digitalRead(pinIRGiris);
+  int irCikisState = digitalRead(pinIRCikis);
+  int irPark1State = digitalRead(pinIRPark1);
+  int irPark2State = digitalRead(pinIRPark2);
+  int irPark3State = digitalRead(pinIRPark3);
+
+  // Giriş kapısı kontrolü
+  if (irGirisState == LOW && !girisKapıDurumu) {
+    servoGiris.write(90);
+    girisKapıDurumu = true;
+    delay(3000);
+    servoGiris.write(0);
+    girisKapıDurumu = false;
+  }
+
+  // Çıkış kapısı kontrolü
+  if (irCikisState == LOW && !cikisKapıDurumu) {
+    servoCikis.write(90);
+    cikisKapıDurumu = true;
+    delay(3000);
+    servoCikis.write(0);
+    cikisKapıDurumu = false;
+  }
+
+  // Park yeri durumlarını güncelle
+  parkDurum1 = (irPark1State == LOW);
+  parkDurum2 = (irPark2State == LOW);
+  parkDurum3 = (irPark3State == LOW);
+
+  // Park yeri durumlarını Firebase'e gönder
+  Firebase.setBool(firebaseData, "/ParkYerleri/Park1", parkDurum1);
+  Firebase.setBool(firebaseData, "/ParkYerleri/Park2", parkDurum2);
+  Firebase.setBool(firebaseData, "/ParkYerleri/Park3", parkDurum3);
+
+  // Firebase'e toplam doluluk durumunu gönder
+  int doluParkYeriSayisi = parkDurum1 + parkDurum2 + parkDurum3;
+  Firebase.setInt(firebaseData, "/DoluParkYeriSayisi", doluParkYeriSayisi);
+
+  // LCD ekran güncelle
+  lcd.setCursor(0, 0);
+  if (doluParkYeriSayisi == 0) {
+    lcd.print("Otopark BOS     ");
+  } else if (doluParkYeriSayisi < 3) {
+    lcd.print(doluParkYeriSayisi);
+    lcd.print(" Park DOLU      ");
+  } else {
+    lcd.print("Otopark DOLU    ");
+  }
+
+  lcd.setCursor(0, 1);
+  lcd.print("P1:");
+  lcd.print(parkDurum1 ? "D" : "B");
+  lcd.print(" P2:");
+  lcd.print(parkDurum2 ? "D" : "B");
+  lcd.print(" P3:");
+  lcd.print(parkDurum3 ? "D" : "B");
+
+  delay(1000);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <ESP32Servo.h>
+#include <FirebaseESP32.h>
+
+// LCD ve Servo ayarları
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+Servo servoGiris;
+Servo servoCikis;
+
+// Pin tanımları
+int pinIRGiris = 34;
+int pinIRCikis = 35;
+int pinIRPark1 = 36;
+int pinIRPark2 = 39;
+int pinIRPark3 = 32;
+int pinServoGiris = 25;
+int pinServoCikis = 26;
+
+// Firebase bilgileri
+#define FIREBASE_HOST "https://gomulu-b71eb-default-rtdb.europe-west1.firebasedatabase.app/" // Firebase URL
+#define FIREBASE_AUTH "QPTTdqsCalMYQCjJAmkWtYZiXh62WH16DnMat6s1" // Legacy Token
+
+// Firebase yapılandırma nesneleri
+FirebaseConfig config;
+FirebaseAuth auth;
+FirebaseData firebaseData;
+
+// Kapı durumları ve zamanlayıcılar
+bool girisKapıAcilma = false;
+bool cikisKapıAcilma = false;
+unsigned long girisKapıZaman = 0;
+unsigned long cikisKapıZaman = 0;
+const unsigned long kapıAcilmaSuresi = 3000; // 3 saniye
+
+// Park durumları
+bool parkDurum1 = false;
+bool parkDurum2 = false;
+bool parkDurum3 = false;
+
+void setup() {
+  // Seri haberleşmeyi başlat
+  Serial.begin(115200);
+
+  // WiFi bağlantısını başlat
+  WiFi.begin("onur", "onur5534");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("WiFi'ye bağlanılıyor...");
+  }
+  Serial.println("WiFi bağlantısı başarılı!");
+
+  // Firebase ayarlarını yap
+  config.host = FIREBASE_HOST;
+  config.signer.tokens.legacy_token = FIREBASE_AUTH;
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  // Sensör pinlerini giriş olarak ayarla
+  pinMode(pinIRGiris, INPUT);
+  pinMode(pinIRCikis, INPUT);
+  pinMode(pinIRPark1, INPUT);
+  pinMode(pinIRPark2, INPUT);
+  pinMode(pinIRPark3, INPUT);
+
+  // Servo motorları başlat
+  servoGiris.attach(pinServoGiris);
+  servoCikis.attach(pinServoCikis);
+  servoGiris.write(0);
+  servoCikis.write(0);
+
+  // LCD ekranı başlat
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Otopark BOS     ");
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  // Giriş kapısı kontrolü
+  if (digitalRead(pinIRGiris) == LOW && !girisKapıAcilma) {
+    girisKapıAcilma = true;
+    girisKapıZaman = currentMillis;
+    servoGiris.write(90); // Kapıyı aç
+  }
+
+  // Giriş kapısı zamanlaması
+  if (girisKapıAcilma && currentMillis - girisKapıZaman >= kapıAcilmaSuresi) {
+    servoGiris.write(0); // Kapıyı kapat
+    girisKapıAcilma = false;
+  }
+
+  // Çıkış kapısı kontrolü
+  if (digitalRead(pinIRCikis) == LOW && !cikisKapıAcilma) {
+    cikisKapıAcilma = true;
+    cikisKapıZaman = currentMillis;
+    servoCikis.write(90); // Kapıyı aç
+  }
+
+  // Çıkış kapısı zamanlaması
+  if (cikisKapıAcilma && currentMillis - cikisKapıZaman >= kapıAcilmaSuresi) {
+    servoCikis.write(0); // Kapıyı kapat
+    cikisKapıAcilma = false;
+  }
+
+  // Park yeri kontrolü
+  parkDurum1 = (digitalRead(pinIRPark1) == LOW);
+  parkDurum2 = (digitalRead(pinIRPark2) == LOW);
+  parkDurum3 = (digitalRead(pinIRPark3) == LOW);
+
+  // Firebase'e gönder
+  Firebase.setBool(firebaseData, "/ParkYerleri/Park1", parkDurum1);
+  Firebase.setBool(firebaseData, "/ParkYerleri/Park2", parkDurum2);
+  Firebase.setBool(firebaseData, "/ParkYerleri/Park3", parkDurum3);
+
+  int doluParkYeriSayisi = parkDurum1 + parkDurum2 + parkDurum3;
+  Firebase.setInt(firebaseData, "/DoluParkYeriSayisi", doluParkYeriSayisi);
+
+  // LCD ekran güncelleme
+  lcd.setCursor(0, 0);
+  if (doluParkYeriSayisi == 0) {
+    lcd.print("Otopark BOS     ");
+  } else if (doluParkYeriSayisi < 3) {
+    lcd.print(doluParkYeriSayisi);
+    lcd.print(" Park DOLU      ");
+  } else {
+    lcd.print("Otopark DOLU    ");
+  }
+
+  lcd.setCursor(0, 1);
+  lcd.print("P1:");
+  lcd.print(parkDurum1 ? "D" : "B");
+  lcd.print(" P2:");
+  lcd.print(parkDurum2 ? "D" : "B");
+  lcd.print(" P3:");
+  lcd.print(parkDurum3 ? "D" : "B");
+
+  delay(100); // Çok düşük bekleme süresi
+}
